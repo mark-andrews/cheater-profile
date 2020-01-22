@@ -1,0 +1,130 @@
+---
+title: Class conditional probabilities from logistic regression
+author: Mark Andrews
+output: pdf_document
+---
+
+```{r, echo=F}
+knitr::opts_chunk$set(warning = F, echo=T, message = F)
+```
+
+A binary logistic regresion provides the probability distribution of a binary variable conditional on a set of predictors.
+In other words, it gives
+$$
+\mathrm{P}(y \vert x_1, x_2 \ldots x_k).
+$$
+We can use Bayes theorem to calculate the *class conditional probabilites* over the predictors:
+$$
+\mathrm{P}(x_1, x_2 \ldots x_k \vert y) = \frac{\overbrace{\mathrm{P}(y \vert x_1, x_2 \ldots x_k)}^{\text{logistic regression}}\mathrm{P}(x_1, x_2 \ldots x_k)}
+{\sum_{\{x_1, x_2, \ldots x_k\}}\mathrm{P}(y \vert x_1, x_2 \ldots x_k)\mathrm{P}(x_1, x_2 \ldots x_k)}
+$$
+For example, $\mathrm{P}(x_1, x_2 \ldots x_k \vert y = 1)$ is the probability distribution over the predictors *given* that $y = 1$. 
+Note that if we assume as uniform prior probability distribution over $x_1, x_2 \ldots x_k$, then this posterior distribution is as follows
+$$
+\mathrm{P}(x_1, x_2 \ldots x_k \vert y) = \frac{\overbrace{\mathrm{P}(y \vert x_1, x_2 \ldots x_k)}^{\text{logistic regression}}}
+{\sum_{\{x_1, x_2, \ldots x_k\}}\mathrm{P}(y \vert x_1, x_2 \ldots x_k)}
+$$
+
+# Example: Profile of cheaters
+
+We'll perform a logistic regression analysis predicting the probability of having an extramarital affair on the basis of gender, age, number of yearsmarried, whether the person has children, how religious they are, what their occupation level is, how educated they are, and how happy their marriage is.
+We'll use the famous *Psychology Today* extramarital affairs survey data and classify a `cheater` as someone who has had at least one extramarital affair in the last year.
+```{r}
+library(tidyverse)
+library(magrittr)
+library(modelr)
+
+affairs_df <- read_csv('data/affairs.csv') %>% 
+  mutate(cheater = affairs > 0)
+```
+
+We perform a binary logistic regression followed by a stepwise regression to reduce the number of predictors down to a minimum set that discriminate between cheaters and noncheaters. 
+```{r, results='hide'}
+affairs_m <- glm(cheater ~ gender + age + yearsmarried + children + 
+                           religiousness + education + occupation + rating,
+                 data = affairs_df,
+                 family = binomial(link = 'logit')
+) %>% step()
+```
+
+The summary of the final model is as follows:
+```{r}
+summary(affairs_m)
+```
+We'll now set up a data frame with all possible combinations of all values of these five variables.
+```{r}
+profiles <- affairs_df %>% 
+  select(gender, age, yearsmarried, religiousness, rating) %>% 
+  map(unique) %>% 
+  cross_df()
+```
+This gives us a set of `r nrow(profiles)` hypothetical individuals based roughly on the types of people in the original data set.
+
+If we assume uniform probability distribution over these profiles, then the class conditional probability distribution of a cheater, i.e.
+$$
+\mathrm{P}(\texttt{gender},
+       \texttt{age},
+       \texttt{yearsmarried},
+       \texttt{religiousness},
+       \texttt{rating}
+       \vert 
+       \texttt{cheater} = \text{True}
+       ),
+$$
+is as follows:
+```{r}
+cheater_profile <-  profiles %>% 
+  add_predictions(affairs_m, type = 'response', var = 'p') %>% 
+  select(p, everything()) %>% 
+  mutate(p = p/sum(p))
+```
+
+With this, we can for example look at the probability distribution over each predictor individually.
+```{r}
+cheater_profile %>% 
+  group_by(gender) %>% 
+  summarize(p = sum(p))
+```
+```{r, echo=F}
+cheater_gender <- cheater_profile %>% group_by(gender) %>% summarise(p = sum(p)) %>% deframe()
+```
+In other words, a cheater is `r round(cheater_gender['male'], 3) *100`% male, and `r round(cheater_gender['female'], 3) *100`% female.
+Or, for example, the probability distribution of the number of years the years the cheater has been married is 
+```{r, echo=T}
+cheater_profile %>% 
+  group_by(yearsmarried) %>% 
+  summarise(p = sum(p))
+```
+We can also create average profiles in different ways. 
+In the following, we produce average profiles for male and female cheaters separately.
+```{r}
+cheater_profile %>%
+  group_by(gender) %>% 
+  mutate(q = p/sum(p)) %>% 
+  transmute(age = sum(q*age), 
+            yearsmarried = sum(q*yearsmarried), 
+            religiousness = sum(q*religiousness), 
+            rating = sum(q*rating)) %>% 
+  distinct()
+```
+
+By contrast, the average profiles of male and female noncheaters are as follows.
+```{r}
+cheater_profile %>%
+  mutate(p = 1 - p) %>% 
+  group_by(gender) %>% 
+  mutate(q = p/sum(p)) %>% 
+  transmute(age = sum(q*age), 
+            yearsmarried = sum(q*yearsmarried), 
+            religiousness = sum(q*religiousness), 
+            rating = sum(q*rating)) %>% 
+  distinct()
+```
+
+
+
+
+
+
+
+
